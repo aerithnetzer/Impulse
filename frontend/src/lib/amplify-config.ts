@@ -13,11 +13,13 @@ Amplify.configure({
           scopes: ["openid", "email"],
           redirectSignIn: [
             process.env.NEXT_PUBLIC_REDIRECT_SIGN_IN ||
-              "http://localhost:3000/dashboard",
+              "http://localhost:3000/dashboard/",
+            "https://main.d3muotvhy8m9f1.amplifyapp.com/dashboard/",
           ],
           redirectSignOut: [
             process.env.NEXT_PUBLIC_REDIRECT_SIGN_OUT ||
               "http://localhost:3000/",
+            "https://main.d3muotvhy8m9f1.amplifyapp.com/",
           ],
           responseType: "code",
         },

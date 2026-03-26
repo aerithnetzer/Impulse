@@ -1,0 +1,7 @@
+# Dependencies for the validator / processing Lambda.
+# Includes pymupdf for PDF page expansion during job validation.
+# boto3 is already provided by the Lambda runtime.
+loguru>=0.7.3
+pymongo>=4.15.2
+certifi>=2024.0.0
+pymupdf>=1.27.1

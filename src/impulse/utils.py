@@ -173,6 +173,29 @@ def detect_filetype(contents: bytes) -> str | None:
 # ── PDF helpers ─────────────────────────────────────────────────────────────
 
 
+def pdf_to_png_images(pdf_bytes: bytes, dpi: int = 150) -> list[bytes]:
+    """Convert each PDF page to raw PNG bytes.
+
+    Returns a list of PNG byte strings, one per page.  Raises
+    ``ValueError`` for empty or corrupt PDFs.
+    """
+    import fitz  # PyMuPDF
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        raise ValueError(f"Failed to open PDF: {exc}") from exc
+
+    if doc.page_count == 0:
+        raise ValueError("PDF has no pages")
+
+    images: list[bytes] = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=dpi)
+        images.append(pix.tobytes("png"))
+    return images
+
+
 def pdf_to_base64_images(pdf_bytes: bytes, dpi: int = 150) -> list[str]:
     """Convert each PDF page to a base64-encoded PNG string."""
     import base64

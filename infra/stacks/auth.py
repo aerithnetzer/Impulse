@@ -43,8 +43,16 @@ class AuthStack(cdk.Stack):
                     authorization_code_grant=True,
                 ),
                 scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
-                callback_urls=["http://localhost:3000/dashboard"],
-                logout_urls=["http://localhost:3000/"],
+                callback_urls=[
+                    "http://localhost:3000/dashboard",
+                    "http://localhost:3000/dashboard/",
+                    "https://main.d3muotvhy8m9f1.amplifyapp.com/dashboard",
+                    "https://main.d3muotvhy8m9f1.amplifyapp.com/dashboard/",
+                ],
+                logout_urls=[
+                    "http://localhost:3000/",
+                    "https://main.d3muotvhy8m9f1.amplifyapp.com/",
+                ],
             ),
             generate_secret=False,  # Public client for SPA
             id_token_validity=cdk.Duration.hours(1),

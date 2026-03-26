@@ -151,13 +151,26 @@ class ProcessingStack(cdk.Stack):
             ],
         )
 
+        # Separate bundling for the validator / processing Lambdas that
+        # need pymupdf for PDF page expansion.
+        _processing_bundling = cdk.BundlingOptions(
+            image=_lambda.Runtime.PYTHON_3_13.bundling_image,
+            command=[
+                "bash",
+                "-c",
+                "pip install -r requirements-processing-lambda.txt -t /asset-output"
+                " && cp -au . /asset-output"
+                " && rm -f /asset-output/requirements-processing-lambda.txt",
+            ],
+        )
+
         lightweight_lambda = _lambda.Function(
             self,
             "LightweightProcessor",
             function_name="impulse-lightweight-processor",
             runtime=_lambda.Runtime.PYTHON_3_13,
             handler="impulse.handlers.lambda_handler.handler",
-            code=_lambda.Code.from_asset(_SRC_DIR, bundling=_bundling),
+            code=_lambda.Code.from_asset(_SRC_DIR, bundling=_processing_bundling),
             memory_size=3008,
             timeout=cdk.Duration.minutes(15),
             vpc=vpc,
@@ -176,6 +189,8 @@ class ProcessingStack(cdk.Stack):
         bucket.grant_read_write(lightweight_lambda)
 
         # ── Lambda: Job Validator (enumerates pages, sets up work) ───────
+        # The validator now expands PDF pages to images, so it needs
+        # pymupdf, more memory, a longer timeout, and S3 write access.
 
         validator_lambda = _lambda.Function(
             self,
@@ -183,9 +198,9 @@ class ProcessingStack(cdk.Stack):
             function_name="impulse-job-validator",
             runtime=_lambda.Runtime.PYTHON_3_13,
             handler="impulse.handlers.lambda_handler.handler",
-            code=_lambda.Code.from_asset(_SRC_DIR, bundling=_bundling),
-            memory_size=512,
-            timeout=cdk.Duration.minutes(5),
+            code=_lambda.Code.from_asset(_SRC_DIR, bundling=_processing_bundling),
+            memory_size=3008,
+            timeout=cdk.Duration.minutes(15),
             environment={
                 "IMPULSE_BUCKET": bucket.bucket_name,
                 "MONGODB_SECRET_ID": "impulse/mongodb-uri",
@@ -193,7 +208,7 @@ class ProcessingStack(cdk.Stack):
         )
         validator_lambda.add_to_role_policy(task_policy)
         validator_lambda.add_to_role_policy(secrets_policy)
-        bucket.grant_read(validator_lambda)
+        bucket.grant_read_write(validator_lambda)
 
         # ── Step Functions: State Machine ────────────────────────────────
 
