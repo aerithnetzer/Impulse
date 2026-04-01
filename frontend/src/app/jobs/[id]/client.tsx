@@ -2,7 +2,7 @@
 
 import "@/lib/amplify-config";
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { StatusBadge, ProgressBar, MetadataTags } from "@/components/status";
 import Link from "next/link";
@@ -152,9 +152,12 @@ interface EnvironmentalImpact {
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname();
+  // In static export, useParams returns the build-time placeholder "_".
+  // usePathname() is reactive and always reflects the real current URL.
   const rawId = params.id as string;
   const jobId = rawId === "_"
-    ? (typeof window !== "undefined" ? window.location.pathname.split("/").filter(Boolean)[1] || "_" : "_")
+    ? (pathname.split("/").filter(Boolean)[1] || "_")
     : rawId;
 
   const [job, setJob] = useState<Job | null>(null);
@@ -180,6 +183,23 @@ export default function JobDetailPage() {
   const [addingToCollection, setAddingToCollection] = useState("");
   const [envImpact, setEnvImpact] = useState<EnvironmentalImpact | null>(null);
   const [envLoading, setEnvLoading] = useState(false);
+
+  // HathiTrust package
+  interface HtPageEntry {
+    filename: string;
+    s3_key: string;
+    label: string;
+    orderlabel: string;
+  }
+  const [showHathiTrustModal, setShowHathiTrustModal] = useState(false);
+  const [hathiTrustLoading, setHathiTrustLoading] = useState(false);
+  const [htPages, setHtPages] = useState<HtPageEntry[]>([]);
+  const [htCaptureDate, setHtCaptureDate] = useState("");
+  const [htScannerMake, setHtScannerMake] = useState("Kirtas");
+  const [htScannerModel, setHtScannerModel] = useState("APT 1200");
+  const [htResolution, setHtResolution] = useState(400);
+  const [htScanningOrder, setHtScanningOrder] = useState("left-to-right");
+  const [htReadingOrder, setHtReadingOrder] = useState("left-to-right");
 
   const fetchJob = useCallback(async () => {
     try {
@@ -300,6 +320,120 @@ export default function JobDetailPage() {
     }
   };
 
+  const HT_LABELS = [
+    "", "FRONT_COVER", "TITLE", "TABLE_OF_CONTENTS", "PREFACE",
+    "CHAPTER_START", "REFERENCES", "INDEX", "BACK_COVER",
+  ];
+
+  const openHathiTrustModal = () => {
+    // Populate page table from job output images, sorted by filename
+    const outputPages: HtPageEntry[] = [];
+    for (const doc of documents) {
+      for (const out of doc.outputs) {
+        const ext = out.filename.split(".").pop()?.toLowerCase() || "";
+        if (["jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "jp2", "j2k"].includes(ext)) {
+          outputPages.push({
+            filename: out.filename,
+            s3_key: out.key,
+            label: "",
+            orderlabel: "",
+          });
+        }
+      }
+    }
+    outputPages.sort((a, b) => a.filename.localeCompare(b.filename));
+    setHtPages(outputPages);
+    // Default capture date to job creation date (YYYY-MM-DD format for date input)
+    if (job?.created_at) {
+      const d = new Date(job.created_at);
+      setHtCaptureDate(d.toISOString().slice(0, 10));
+    }
+    setShowHathiTrustModal(true);
+  };
+
+  const updateHtPage = (index: number, field: "label" | "orderlabel", value: string) => {
+    setHtPages(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const htSetFirstAsFrontCover = () => {
+    if (htPages.length === 0) return;
+    setHtPages(prev => {
+      const next = [...prev];
+      next[0] = { ...next[0], label: "FRONT_COVER" };
+      return next;
+    });
+  };
+
+  const htSetLastAsBackCover = () => {
+    if (htPages.length === 0) return;
+    setHtPages(prev => {
+      const next = [...prev];
+      next[next.length - 1] = { ...next[next.length - 1], label: "BACK_COVER" };
+      return next;
+    });
+  };
+
+  const htAutoNumberPages = () => {
+    setHtPages(prev =>
+      prev.map((p, i) => ({ ...p, orderlabel: String(i + 1) }))
+    );
+  };
+
+  const htClearAllLabels = () => {
+    setHtPages(prev =>
+      prev.map(p => ({ ...p, label: "", orderlabel: "" }))
+    );
+  };
+
+  const handleCreateHathiTrustPackage = async () => {
+    if (htPages.length === 0 || hathiTrustLoading) return;
+    setHathiTrustLoading(true);
+    try {
+      // Format capture date with timezone offset
+      const captureDateFormatted = htCaptureDate
+        ? `${htCaptureDate}T00:00:00-06:00`
+        : "unknown";
+
+      const data = await apiPost<{
+        download_url: string;
+        images_included: number;
+        total_pages: number;
+        warnings?: string[];
+      }>(`/jobs/${jobId}/hathitrust-package`, {
+        pages: htPages.map(p => ({
+          filename: p.filename,
+          s3_key: p.s3_key,
+          label: p.label,
+          orderlabel: p.orderlabel,
+        })),
+        capture_date: captureDateFormatted,
+        scanner_make: htScannerMake,
+        scanner_model: htScannerModel,
+        resolution: htResolution,
+        scanning_order: htScanningOrder,
+        reading_order: htReadingOrder,
+      });
+
+      if (data.warnings && data.warnings.length > 0) {
+        alert(
+          `Package created with ${data.images_included}/${data.total_pages} images.\n\nWarnings:\n${data.warnings.join("\n")}`
+        );
+      }
+
+      // Trigger download
+      window.open(data.download_url, "_blank");
+      setShowHathiTrustModal(false);
+    } catch (err) {
+      alert(`Failed to create HathiTrust package: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setHathiTrustLoading(false);
+    }
+  };
+
   const fetchEnvImpact = useCallback(async () => {
     if (envLoading) return;
     setEnvLoading(true);
@@ -404,6 +538,27 @@ export default function JobDetailPage() {
                 }}
               >
                 {restarting ? "Restarting..." : "Restart Job"}
+              </button>
+            )}
+            {job.status === "COMPLETED" && (
+              <button
+                onClick={openHathiTrustModal}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.375rem",
+                  padding: "0.375rem 0.75rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  color: "white",
+                  backgroundColor: "#7c3aed",
+                  border: "none",
+                  borderRadius: "0.375rem",
+                  cursor: "pointer",
+                  transition: "background-color 0.15s",
+                }}
+              >
+                Create HathiTrust Package
               </button>
             )}
             {job.status !== "PROCESSING" && (
@@ -1710,6 +1865,345 @@ export default function JobDetailPage() {
               >
                 {deleting ? "Deleting..." : "Delete Permanently"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── HathiTrust Package Modal ────────────────────────────── */}
+      {showHathiTrustModal && (
+        <div
+          onClick={() => { if (!hathiTrustLoading) setShowHathiTrustModal(false); }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: "2rem",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: "white",
+              borderRadius: "0.75rem",
+              padding: "1.5rem",
+              maxWidth: "56rem",
+              width: "100%",
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 25px 50px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: "0.5rem", color: "#7c3aed" }}>
+              Create HathiTrust Package
+            </h3>
+            <p style={{ fontSize: "0.85rem", color: "var(--muted)", lineHeight: 1.5, marginBottom: "1rem" }}>
+              Configure scanner settings and assign structural labels to each page.
+              The package will contain a YAML manifest and JP2 images.
+            </p>
+
+            {/* Scanner settings grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Scanner Make
+                </label>
+                <input
+                  type="text"
+                  value={htScannerMake}
+                  onChange={(e) => setHtScannerMake(e.target.value)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Scanner Model
+                </label>
+                <input
+                  type="text"
+                  value={htScannerModel}
+                  onChange={(e) => setHtScannerModel(e.target.value)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Resolution (DPI)
+                </label>
+                <input
+                  type="number"
+                  value={htResolution}
+                  onChange={(e) => setHtResolution(parseInt(e.target.value) || 400)}
+                  disabled={hathiTrustLoading}
+                  min={72}
+                  max={1200}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Capture Date
+                </label>
+                <input
+                  type="date"
+                  value={htCaptureDate}
+                  onChange={(e) => setHtCaptureDate(e.target.value)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Scanning Order
+                </label>
+                <select
+                  value={htScanningOrder}
+                  onChange={(e) => setHtScanningOrder(e.target.value)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                    backgroundColor: "white",
+                  }}
+                >
+                  <option value="left-to-right">Left to Right</option>
+                  <option value="right-to-left">Right to Left</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+                  Reading Order
+                </label>
+                <select
+                  value={htReadingOrder}
+                  onChange={(e) => setHtReadingOrder(e.target.value)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.375rem 0.5rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    fontSize: "0.8rem",
+                    boxSizing: "border-box",
+                    backgroundColor: "white",
+                  }}
+                >
+                  <option value="left-to-right">Left to Right</option>
+                  <option value="right-to-left">Right to Left</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Quick-fill toolbar */}
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+              <button
+                onClick={htSetFirstAsFrontCover}
+                disabled={hathiTrustLoading || htPages.length === 0}
+                style={{
+                  padding: "0.25rem 0.625rem",
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                  color: "#7c3aed",
+                  backgroundColor: "#f3f0ff",
+                  border: "1px solid #7c3aed22",
+                  borderRadius: "0.375rem",
+                  cursor: "pointer",
+                }}
+              >
+                Set first as Front Cover
+              </button>
+              <button
+                onClick={htSetLastAsBackCover}
+                disabled={hathiTrustLoading || htPages.length === 0}
+                style={{
+                  padding: "0.25rem 0.625rem",
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                  color: "#7c3aed",
+                  backgroundColor: "#f3f0ff",
+                  border: "1px solid #7c3aed22",
+                  borderRadius: "0.375rem",
+                  cursor: "pointer",
+                }}
+              >
+                Set last as Back Cover
+              </button>
+              <button
+                onClick={htAutoNumberPages}
+                disabled={hathiTrustLoading || htPages.length === 0}
+                style={{
+                  padding: "0.25rem 0.625rem",
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                  color: "#7c3aed",
+                  backgroundColor: "#f3f0ff",
+                  border: "1px solid #7c3aed22",
+                  borderRadius: "0.375rem",
+                  cursor: "pointer",
+                }}
+              >
+                Auto-number pages
+              </button>
+              <button
+                onClick={htClearAllLabels}
+                disabled={hathiTrustLoading || htPages.length === 0}
+                style={{
+                  padding: "0.25rem 0.625rem",
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                  color: "#dc2626",
+                  backgroundColor: "#fef2f2",
+                  border: "1px solid #dc262622",
+                  borderRadius: "0.375rem",
+                  cursor: "pointer",
+                }}
+              >
+                Clear all labels
+              </button>
+            </div>
+
+            {/* Page table */}
+            <div style={{ flex: 1, overflow: "auto", border: "1px solid var(--border)", borderRadius: "0.5rem", marginBottom: "1rem" }}>
+              {htPages.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "2rem", color: "var(--muted)", fontSize: "0.85rem" }}>
+                  No output images found for this job. Process the job first to generate output images.
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border)", backgroundColor: "#fafafa", position: "sticky", top: 0, zIndex: 1 }}>
+                      <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", fontWeight: 600, color: "var(--muted)", fontSize: "0.7rem", textTransform: "uppercase", width: "3rem" }}>#</th>
+                      <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", fontWeight: 600, color: "var(--muted)", fontSize: "0.7rem", textTransform: "uppercase" }}>Filename</th>
+                      <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", fontWeight: 600, color: "var(--muted)", fontSize: "0.7rem", textTransform: "uppercase", width: "12rem" }}>Label</th>
+                      <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", fontWeight: 600, color: "var(--muted)", fontSize: "0.7rem", textTransform: "uppercase", width: "6rem" }}>Page #</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {htPages.map((page, i) => (
+                      <tr key={page.s3_key} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ padding: "0.375rem 0.75rem", color: "var(--muted)", fontSize: "0.7rem" }}>{i + 1}</td>
+                        <td style={{ padding: "0.375rem 0.75rem", fontFamily: "monospace", fontSize: "0.75rem" }}>{page.filename}</td>
+                        <td style={{ padding: "0.375rem 0.75rem" }}>
+                          <select
+                            value={page.label}
+                            onChange={(e) => updateHtPage(i, "label", e.target.value)}
+                            disabled={hathiTrustLoading}
+                            style={{
+                              width: "100%",
+                              padding: "0.25rem 0.375rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "0.25rem",
+                              fontSize: "0.75rem",
+                              boxSizing: "border-box",
+                              backgroundColor: "white",
+                            }}
+                          >
+                            {HT_LABELS.map((l) => (
+                              <option key={l} value={l}>{l || "(none)"}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: "0.375rem 0.75rem" }}>
+                          <input
+                            type="text"
+                            value={page.orderlabel}
+                            onChange={(e) => updateHtPage(i, "orderlabel", e.target.value)}
+                            disabled={hathiTrustLoading}
+                            placeholder=""
+                            style={{
+                              width: "100%",
+                              padding: "0.25rem 0.375rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "0.25rem",
+                              fontSize: "0.75rem",
+                              boxSizing: "border-box",
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                {htPages.length} page{htPages.length !== 1 ? "s" : ""}
+              </span>
+              <div style={{ display: "flex", gap: "0.75rem" }}>
+                <button
+                  onClick={() => setShowHathiTrustModal(false)}
+                  disabled={hathiTrustLoading}
+                  style={{
+                    padding: "0.5rem 1rem",
+                    fontSize: "0.8rem",
+                    backgroundColor: "transparent",
+                    border: "1px solid var(--border)",
+                    borderRadius: "0.375rem",
+                    cursor: hathiTrustLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateHathiTrustPackage}
+                  disabled={htPages.length === 0 || hathiTrustLoading}
+                  style={{
+                    padding: "0.5rem 1rem",
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: "white",
+                    backgroundColor: htPages.length > 0 && !hathiTrustLoading ? "#7c3aed" : "#9ca3af",
+                    border: "none",
+                    borderRadius: "0.375rem",
+                    cursor: htPages.length > 0 && !hathiTrustLoading ? "pointer" : "not-allowed",
+                    transition: "background-color 0.15s",
+                  }}
+                >
+                  {hathiTrustLoading ? "Creating Package..." : "Create Package"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

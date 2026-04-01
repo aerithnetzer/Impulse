@@ -2,7 +2,7 @@
 
 import "@/lib/amplify-config";
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import Link from "next/link";
 
@@ -30,11 +30,12 @@ const TYPE_LABELS: Record<string, string> = { PER: "Person", LOC: "Location", OR
 export default function AnalysisWorkspacePage() {
   const params = useParams();
   const router = useRouter();
-  // In static export, useParams may return the build-time placeholder "_".
-  // Fall back to extracting the real ID from the URL.
+  const pathname = usePathname();
+  // In static export, useParams returns the build-time placeholder "_".
+  // usePathname() is reactive and always reflects the real current URL.
   const rawId = params.id as string;
   const analysisId = rawId === "_"
-    ? (typeof window !== "undefined" ? window.location.pathname.split("/").filter(Boolean)[1] || "_" : "_")
+    ? (pathname.split("/").filter(Boolean)[1] || "_")
     : rawId;
 
   const [analysis, setAnalysis] = useState<AnalysisDetail | null>(null);

@@ -26,6 +26,8 @@ logdir/
 .env
 .env.local
 
+.env.production
+
 # Test / coverage
 .coverage
 htmlcov/

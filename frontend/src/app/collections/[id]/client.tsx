@@ -2,7 +2,7 @@
 
 import "@/lib/amplify-config";
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import Link from "next/link";
 
@@ -66,9 +66,12 @@ interface CollectionImpact {
 export default function CollectionDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname();
+  // In static export, useParams returns the build-time placeholder "_".
+  // usePathname() is reactive and always reflects the real current URL.
   const rawId = params.id as string;
   const collectionId = rawId === "_"
-    ? (typeof window !== "undefined" ? window.location.pathname.split("/").filter(Boolean)[1] || "_" : "_")
+    ? (pathname.split("/").filter(Boolean)[1] || "_")
     : rawId;
 
   const [collection, setCollection] = useState<CollectionDetail | null>(null);

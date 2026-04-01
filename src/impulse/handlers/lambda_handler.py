@@ -452,7 +452,7 @@ def _dispatch(task_type: str, event: dict) -> dict:
         from impulse.processing.mets import convert_mets_to_yaml
 
         content = get_s3_content(f"s3://{S3_BUCKET}/{document_key}")
-        yaml_content = convert_mets_to_yaml(content)
+        yaml_content, _referenced = convert_mets_to_yaml(content)
         if output_key:
             put_s3_content(
                 f"s3://{S3_BUCKET}/{output_key}",

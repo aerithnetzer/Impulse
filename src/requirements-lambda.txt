@@ -3,3 +3,5 @@
 loguru>=0.7.3
 pymongo>=4.15.2
 certifi>=2024.0.0
+lxml>=6.0.2
+Pillow>=10.4.0

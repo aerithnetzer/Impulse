@@ -1,8 +1,7 @@
 import AnalysisWorkspacePage from "./client";
 
+// Only needed for `next build` with output: export
 export async function generateStaticParams() {
-  // Generate a placeholder so Next.js outputs an HTML shell.
-  // CloudFront/Amplify rewrites unknown /analyses/* paths to this.
   return [{ id: "_" }];
 }
 

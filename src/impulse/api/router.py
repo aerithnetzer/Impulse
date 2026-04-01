@@ -97,6 +97,13 @@ def handler(event: dict, context) -> dict:
 
             return get_job_environmental_impact(m.group(1), user_id)
 
+        elif (
+            m := re.match(r"^/jobs/([^/]+)/hathitrust-package$", path)
+        ) and method == "POST":
+            from impulse.api.hathitrust_package import create_hathitrust_package
+
+            return create_hathitrust_package(m.group(1), body, user_id)
+
         # Collections
         elif path == "/collections" and method == "POST":
             from impulse.api.collections import create_collection
